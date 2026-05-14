@@ -1,0 +1,24 @@
+Checks:
+  '-*,
+  bugprone-*,
+  cert-*,
+  -cert-dcl58-cpp,
+  clang-analyzer-*,
+  concurrency-*,
+  cppcoreguidelines-*,
+  -cppcoreguidelines-avoid-magic-numbers,
+  -cppcoreguidelines-non-private-member-variables-in-classes,
+  hicpp-*,
+  -hicpp-magic-numbers,
+  misc-*,
+  -misc-const-correctness,
+  -misc-include-cleaner,
+  modernize-*,
+  -modernize-use-nodiscard,
+  performance-*,
+  portability-*,
+  -readability-*,
+  -readability-magic-numbers'
+HeaderFilterRegex: '.*/redis/(include|src|examples|tests)/.*\.(hpp|cpp)$'
+WarningsAsErrors: ''
+FormatStyle: file

@@ -1,0 +1,33 @@
+---
+BasedOnStyle: LLVM
+Language: Cpp
+AccessModifierOffset: -2
+AlignAfterOpenBracket: Align
+AlignConsecutiveDeclarations: true
+AllowShortFunctionsOnASingleLine: All
+AlwaysBreakTemplateDeclarations: Yes
+BinPackArguments: false
+BinPackParameters: false
+BreakBeforeBraces: Custom
+BraceWrapping:
+  AfterClass: false
+  AfterControlStatement: Never
+  AfterEnum: false
+  AfterFunction: false
+  AfterNamespace: false
+  AfterStruct: false
+  SplitEmptyFunction: true
+  SplitEmptyRecord: true
+ColumnLimit: 119
+DerivePointerAlignment: false
+IndentWidth: 4
+NamespaceIndentation: None
+PointerAlignment: Left
+ReferenceAlignment: Pointer
+RequiresClausePosition: OwnLine
+SortIncludes: Never
+---
+Language: Json
+BasedOnStyle: LLVM
+IndentWidth: 2
+UseTab: Never
