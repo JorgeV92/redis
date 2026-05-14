@@ -18,8 +18,9 @@ senders and receivers.
 
 The current MVP supports request encoding and basic RESP2-compatible response
 parsing. Networking is deliberately isolated behind `beman::redis::detail::transport`
-and currently reports a clear "transport not implemented" error when command
-execution is started.
+and has a synchronous TCP transport for one-shot command execution against a
+Redis server. The long-lived async run loop, RESP3 negotiation, authentication,
+and push-message handling are still pending.
 
 ## Build
 
@@ -97,7 +98,7 @@ See `examples/` for complete starter programs.
 
 ## Roadmap
 
-1. Replace the transport stub with a `beman.net` TCP implementation.
+1. Replace the synchronous transport MVP with a `beman.net` async TCP implementation.
 2. Add a long-lived connection run loop that correlates pending requests with
    parsed responses.
 3. Add authentication and RESP3 `HELLO` negotiation.

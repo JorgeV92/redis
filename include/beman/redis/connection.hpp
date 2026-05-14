@@ -6,8 +6,11 @@
 
 #include <beman/redis/config.hpp>
 #include <beman/redis/detail/pending_queue.hpp>
+#include <beman/redis/request.hpp>
+#include <beman/redis/response.hpp>
 
 #include <memory>
+#include <string>
 
 namespace beman::redis::detail {
 class transport;
@@ -27,13 +30,14 @@ class connection {
     auto operator=(connection const&) -> connection& = delete;
 
     [[nodiscard]] auto get_config() const noexcept -> config const&;
+    auto               connect() -> void;
+    auto               execute(request req) -> generic_response;
 
   private:
     config                             cfg_;
     std::unique_ptr<detail::transport> transport_;
     detail::pending_queue              pending_;
-    // TODO: socket/transport state ownership belongs in detail::transport.
-    // TODO: use pending_ to correlate pipelined requests with parsed responses.
+    std::string                        input_buffer_;
 };
 
 } // namespace beman::redis

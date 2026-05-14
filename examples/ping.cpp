@@ -55,7 +55,13 @@ auto main() -> int {
     ex::start(connect_op);
 
     if (!conn) {
-        std::cout << "connect failed\n";
+        try {
+            if (error) {
+                std::rethrow_exception(error);
+            }
+        } catch (std::exception const& ex) {
+            std::cout << "connect failed: " << ex.what() << '\n';
+        }
         return 1;
     }
 

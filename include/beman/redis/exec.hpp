@@ -47,8 +47,8 @@ class exec_sender {
                     throw std::logic_error("beman.redis exec requires a non-empty request");
                 }
 
-                // TODO: enqueue request, write req_.payload(), read response frames, then complete with set_value.
-                throw std::logic_error("beman.redis exec is a transport stub; no request was written");
+                auto response = this->conn_->execute(std::move(this->req_));
+                ::beman::execution::set_value(std::move(this->receiver_), std::move(response));
             } catch (...) {
                 ::beman::execution::set_error(std::move(this->receiver_), std::current_exception());
             }

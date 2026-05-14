@@ -36,7 +36,9 @@ class connect_sender {
 
         auto start() & noexcept -> void {
             try {
-                ::beman::execution::set_value(std::move(this->receiver_), connection{std::move(this->cfg_)});
+                connection conn{std::move(this->cfg_)};
+                conn.connect();
+                ::beman::execution::set_value(std::move(this->receiver_), std::move(conn));
             } catch (...) {
                 ::beman::execution::set_error(std::move(this->receiver_), std::current_exception());
             }

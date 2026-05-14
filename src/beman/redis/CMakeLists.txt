@@ -14,6 +14,7 @@ target_sources(
         resp_encode.cpp
         resp_parse.cpp
         response.cpp
+        transport.cpp
     PUBLIC
         FILE_SET public_headers
             TYPE HEADERS

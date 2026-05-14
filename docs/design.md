@@ -11,19 +11,20 @@
 The core API is sender-shaped. `connect(config)`, `exec(connection&, request)`,
 and `run(connection&)` return `beman.execution` sender-like objects that can be
 connected to a receiver and started. The current implementation uses a small
-local sender scaffold so protocol work can proceed before the transport is real.
+local sender scaffold and a synchronous TCP transport MVP so protocol work can be
+tested against Redis before the final async run loop lands.
 
 ## Milestones
 
 1. Protocol MVP: request encoding, RESP basics, and tests without Redis.
-2. Transport MVP: `beman.net` TCP connect/write/read behind `detail::transport`.
+2. Transport MVP: TCP connect/write/read behind `detail::transport`.
 3. Execution MVP: command queue, response correlation, and a run loop.
 4. Redis MVP: PING, SET, GET, AUTH/HELLO, and basic pipelining against Redis.
 5. Resilience MVP: cancellation policy, reconnect state machine, and push messages.
 
 ## First Issues
 
-1. Implement `detail::transport` using `beman.net` TCP primitives.
+1. Replace the synchronous transport MVP with `beman.net` TCP primitives.
 2. Add a connection run loop that reads RESP frames and completes pending commands.
 3. Add RESP3 `HELLO` negotiation and optional username/password authentication.
 4. Add integration tests gated behind an opt-in live Redis option.

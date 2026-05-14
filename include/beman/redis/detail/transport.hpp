@@ -5,36 +5,30 @@
 #define INCLUDED_BEMAN_REDIS_DETAIL_TRANSPORT
 
 #include <beman/redis/config.hpp>
-#include <beman/redis/detail/sender.hpp>
 
-#include <beman/net/net.hpp>
-
-#include <cstddef>
 #include <string>
-#include <utility>
+#include <string_view>
 
 namespace beman::redis::detail {
 
 class transport {
   public:
-    explicit transport(config const& cfg) : cfg_(cfg) {}
+    explicit transport(config cfg);
+    ~transport();
 
-    auto async_connect() -> failed_sender<> {
-        return failed_sender<>("beman.redis transport is a stub; beman.net connect is not wired yet");
-    }
+    transport(transport&& other) noexcept;
+    auto operator=(transport&& other) noexcept -> transport&;
 
-    auto async_write(std::string payload) -> failed_sender<std::size_t> {
-        (void)payload;
-        return failed_sender<std::size_t>("beman.redis transport is a stub; async_write is not wired yet");
-    }
+    transport(transport const&) = delete;
+    auto operator=(transport const&) -> transport& = delete;
 
-    auto async_read_some() -> failed_sender<std::string> {
-        return failed_sender<std::string>("beman.redis transport is a stub; async_read_some is not wired yet");
-    }
+    auto connect() -> void;
+    auto write_all(std::string_view payload) -> void;
+    [[nodiscard]] auto read_some() -> std::string;
 
   private:
     config cfg_;
-    // TODO: Store beman.net io context/socket/resolver state once those APIs settle.
+    int    socket_ = -1;
 };
 
 } // namespace beman::redis::detail

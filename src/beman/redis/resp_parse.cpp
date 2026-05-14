@@ -19,7 +19,7 @@ class parser {
 
     auto parse_value() -> value {
         if (this->position_ >= this->input_.size()) {
-            throw parse_error("incomplete RESP frame");
+            throw parse_error("incomplete RESP frame", parse_error_reason::incomplete);
         }
 
         char const prefix = this->input_[this->position_++];
@@ -43,7 +43,7 @@ class parser {
     auto read_line() -> std::string_view {
         auto const line_end = this->input_.find("\r\n", this->position_);
         if (line_end == std::string_view::npos) {
-            throw parse_error("incomplete RESP line");
+            throw parse_error("incomplete RESP line", parse_error_reason::incomplete);
         }
 
         auto const line = this->input_.substr(this->position_, line_end - this->position_);
@@ -76,7 +76,7 @@ class parser {
 
         auto const string_length = static_cast<std::size_t>(length);
         if (this->position_ + string_length + 2u > this->input_.size()) {
-            throw parse_error("incomplete RESP bulk string");
+            throw parse_error("incomplete RESP bulk string", parse_error_reason::incomplete);
         }
 
         auto const text = this->input_.substr(this->position_, string_length);
@@ -117,6 +117,18 @@ auto parse_one(std::string_view input) -> std::pair<value, std::size_t> {
     parser p{input};
     auto   parsed = p.parse_value();
     return {std::move(parsed), p.position()};
+}
+
+auto try_parse_one(std::string_view input) -> std::optional<std::pair<value, std::size_t>> {
+    try {
+        return parse_one(input);
+    } catch (parse_error const& error) {
+        if (error.incomplete()) {
+            return std::nullopt;
+        }
+
+        throw;
+    }
 }
 
 auto parse(std::string_view input) -> parse_result {

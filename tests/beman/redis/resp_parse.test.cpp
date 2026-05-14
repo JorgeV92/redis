@@ -31,6 +31,14 @@ auto main() -> int {
     assert(consumed == 9u);
     assert(std::get<bulk_string>(one).value == "foo");
 
+    auto partial = detail::try_parse_one("+O");
+    assert(!partial);
+
+    auto complete = detail::try_parse_one("+OK\r\nleftover");
+    assert(complete);
+    assert(complete->second == 5u);
+    assert(std::get<simple_string>(complete->first).value == "OK");
+
     bool threw = false;
     try {
         (void)detail::parse("$5\r\nhel");

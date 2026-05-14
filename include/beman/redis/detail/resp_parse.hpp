@@ -7,6 +7,7 @@
 #include <beman/redis/response.hpp>
 
 #include <cstddef>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -14,9 +15,18 @@
 
 namespace beman::redis::detail {
 
+enum class parse_error_reason { invalid, incomplete };
+
 class parse_error : public std::runtime_error {
   public:
-    explicit parse_error(std::string message) : std::runtime_error(std::move(message)) {}
+    explicit parse_error(std::string message, parse_error_reason reason = parse_error_reason::invalid)
+        : std::runtime_error(std::move(message)), reason_(reason) {}
+
+    [[nodiscard]] auto reason() const noexcept -> parse_error_reason { return this->reason_; }
+    [[nodiscard]] auto incomplete() const noexcept -> bool { return this->reason_ == parse_error_reason::incomplete; }
+
+  private:
+    parse_error_reason reason_;
 };
 
 struct parse_result {
@@ -25,6 +35,7 @@ struct parse_result {
 };
 
 [[nodiscard]] auto parse_one(std::string_view input) -> std::pair<value, std::size_t>;
+[[nodiscard]] auto try_parse_one(std::string_view input) -> std::optional<std::pair<value, std::size_t>>;
 [[nodiscard]] auto parse(std::string_view input) -> parse_result;
 
 } // namespace beman::redis::detail

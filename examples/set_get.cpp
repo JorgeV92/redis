@@ -52,6 +52,13 @@ auto main() -> int {
     auto connect_op = ex::connect(redis::connect(redis::config{}), capture_connection{&conn, &error});
     ex::start(connect_op);
     if (!conn) {
+        try {
+            if (error) {
+                std::rethrow_exception(error);
+            }
+        } catch (std::exception const& ex) {
+            std::cout << "connect failed: " << ex.what() << '\n';
+        }
         return 1;
     }
 
