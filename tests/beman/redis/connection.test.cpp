@@ -59,6 +59,19 @@ struct stopped_receiver {
     auto set_stopped() && noexcept -> void { *this->stopped = true; }
 };
 
+struct run_receiver {
+    using receiver_concept = ex::receiver_tag;
+
+    bool*               value{};
+    std::exception_ptr* error{};
+    bool*               stopped{};
+
+    auto get_env() const noexcept -> ex::env<> { return {}; }
+    auto set_value() && noexcept -> void { *this->value = true; }
+    auto set_error(std::exception_ptr value) && noexcept -> void { *this->error = value; }
+    auto set_stopped() && noexcept -> void { *this->stopped = true; }
+};
+
 namespace {
 
 constexpr int invalid_socket = -1;
@@ -142,39 +155,42 @@ class fake_redis_server {
 
 } // namespace
 
-auto test_exec_on_disconnected_connection() -> void {
+auto test_connect_and_empty_exec() -> void {
     redis::config cfg;
     cfg.host = "localhost";
 
-    redis::connection conn(cfg);
-    assert(conn.get_config().host == "localhost");
+    std::optional<redis::connection> conn;
+    std::exception_ptr               connect_error;
+    bool                             connect_stopped = false;
+
+    auto connect_op = ex::connect(redis::connect(cfg), connection_receiver{&conn, &connect_error, &connect_stopped});
+    ex::start(connect_op);
+
+    assert(conn.has_value());
+    assert(!connect_error);
+    assert(!connect_stopped);
+    assert(conn->get_config().host == "localhost");
 
     redis::request req;
-    req.push("PING");
 
     std::optional<redis::generic_response> got_value;
     std::exception_ptr                     exec_error;
     bool                                   exec_stopped = false;
 
     auto exec_op =
-        ex::connect(redis::exec(conn, std::move(req)), response_receiver{&got_value, &exec_error, &exec_stopped});
+        ex::connect(redis::exec(*conn, std::move(req)), response_receiver{&got_value, &exec_error, &exec_stopped});
     ex::start(exec_op);
 
     assert(!got_value);
     assert(exec_error);
     assert(!exec_stopped);
-
-    bool run_stopped = false;
-    auto run_op      = ex::connect(redis::run(conn), stopped_receiver{&run_stopped});
-    ex::start(run_op);
-    assert(run_stopped);
 }
 
 auto test_live_tcp_ping() -> void {
     fake_redis_server server("+PONG\r\n");
 
     redis::config cfg;
-    cfg.host = "127.0.0.1";
+    cfg.host = "localhost";
     cfg.port = std::to_string(server.port());
 
     std::optional<redis::connection> conn;
@@ -187,7 +203,7 @@ auto test_live_tcp_ping() -> void {
     assert(conn.has_value());
     assert(!connect_error);
     assert(!connect_stopped);
-    assert(conn->get_config().host == "127.0.0.1");
+    assert(conn->get_config().host == "localhost");
 
     redis::request req;
     req.push("PING");
@@ -200,16 +216,21 @@ auto test_live_tcp_ping() -> void {
         ex::connect(redis::exec(*conn, std::move(req)), response_receiver{&got_value, &exec_error, &exec_stopped});
     ex::start(exec_op);
 
+    bool               run_value = false;
+    std::exception_ptr run_error;
+    bool               run_stopped = false;
+    auto run_op = ex::connect(redis::run(*conn), run_receiver{&run_value, &run_error, &run_stopped});
+    ex::start(run_op);
+
+    assert(run_value);
+    assert(!run_error);
+    assert(!run_stopped);
+
     assert(got_value);
     assert(got_value->size() == 1u);
     assert(std::get<redis::simple_string>((*got_value)[0]).value == "PONG");
     assert(!exec_error);
     assert(!exec_stopped);
-
-    bool run_stopped = false;
-    auto run_op = ex::connect(redis::run(*conn), stopped_receiver{&run_stopped});
-    ex::start(run_op);
-    assert(run_stopped);
 }
 
 auto main() -> int {
@@ -218,5 +239,5 @@ auto main() -> int {
         return 0;
     }
 
-    test_exec_on_disconnected_connection();
+    test_connect_and_empty_exec();
 }

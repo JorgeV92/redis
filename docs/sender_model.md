@@ -3,13 +3,18 @@
 The public operations are intentionally vocabulary-shaped:
 
 - `connect(config)` completes with `set_value(connection)`.
-- `exec(connection&, request)` will complete with `set_value(generic_response)`.
-- `run(connection&)` will eventually run until stopped and dispatch push messages.
+- `exec(connection&, request)` queues a request and completes later with
+  `set_value(generic_response)`.
+- `run(connection&)` drives the connection's queued work.
 
-For now, `connect` opens a TCP socket and `exec` synchronously writes the encoded
-request and reads the expected number of RESP frames before completing the
-receiver. `run` still completes stopped; the long-lived async reader/writer loop
-is the next execution milestone.
+For now, `connect` creates the connection object without opening the socket.
+`exec` validates and queues the encoded request. `run` opens the `beman.net`
+socket if needed, writes queued request payloads, reads RESP frames, and
+completes the corresponding `exec` receivers.
+
+The current `run` drains work that is already queued and then completes. A
+long-lived stoppable loop that can wait for future `exec` requests is the next
+execution milestone.
 
 The local sender types use `beman.execution` directly. They remain intentionally
-small while the run-loop behavior is still being designed.
+small while the long-lived run-loop behavior is still being designed.

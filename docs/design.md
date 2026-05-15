@@ -11,29 +11,32 @@
 The core API is sender-shaped. `connect(config)`, `exec(connection&, request)`,
 and `run(connection&)` return `beman.execution` sender-like objects that can be
 connected to a receiver and started. The current implementation uses a small
-local sender scaffold and a synchronous TCP transport MVP so protocol work can be
-tested against Redis before the final async run loop lands.
+local sender scaffold, a `getaddrinfo` resolver fallback, a `beman.net` TCP
+transport, and a run loop that drains queued requests so protocol work can be
+tested against Redis before the final long-lived loop lands.
 
 ## Milestones
 
 1. Protocol MVP: request encoding, RESP basics, and tests without Redis.
-2. Transport MVP: TCP connect/write/read behind `detail::transport`.
-3. Execution MVP: command queue, response correlation, and a run loop.
+2. Transport MVP: `getaddrinfo` resolution plus `beman.net` TCP connect/write/read
+   behind `detail::transport`.
+3. Execution MVP: command queue, response correlation, and a drain-style run loop.
 4. Redis MVP: PING, SET, GET, AUTH/HELLO, and basic pipelining against Redis.
 5. Resilience MVP: cancellation policy, reconnect state machine, and push messages.
 
 ## First Issues
 
-1. Replace the synchronous transport MVP with `beman.net` TCP primitives.
-2. Add a connection run loop that reads RESP frames and completes pending commands.
-3. Add RESP3 `HELLO` negotiation and optional username/password authentication.
-4. Add integration tests gated behind an opt-in live Redis option.
-5. Define cancellation and stop-token behavior for `exec` and `run`.
+1. Extend `run(connection&)` into a long-lived stoppable loop.
+2. Allow `run` to wait for future `exec` requests instead of only draining queued work.
+3. Replace the `getaddrinfo` fallback with a native `beman.net` resolver once
+   that API is available.
+4. Add RESP3 `HELLO` negotiation and optional username/password authentication.
+5. Add integration tests gated behind an opt-in live Redis option.
+6. Define cancellation and stop-token behavior for `exec` and `run`.
 
 ## Research Questions
 
-- Which `beman.net` socket/resolver APIs are intended to be stable enough for
-  library code?
+- What should the adapter look like when `beman.net` exposes a stable resolver API?
 - How should `beman.execution` senders expose completion signatures for operations
   that can complete from a background run loop?
 - Should `exec` own request payload bytes until write completion or copy into a

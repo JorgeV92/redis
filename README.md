@@ -5,7 +5,6 @@ SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 
 ![Library Status](https://raw.githubusercontent.com/bemanproject/beman/refs/heads/main/images/badges/beman_badge-beman_library_under_development.svg)
 ![Standard Target](https://github.com/bemanproject/beman/blob/main/images/badges/cpp26.svg)
-![CI](https://github.com/bemanproject/redis/actions/workflows/ci.yml/badge.svg)
 
 `beman.redis` is an experimental Redis client designed around P2300-style
 senders and receivers.
@@ -17,10 +16,13 @@ senders and receivers.
 ## Current Scope
 
 The current MVP supports request encoding and basic RESP2-compatible response
-parsing. Networking is deliberately isolated behind `beman::redis::detail::transport`
-and has a synchronous TCP transport for one-shot command execution against a
-Redis server. The long-lived async run loop, RESP3 negotiation, authentication,
-and push-message handling are still pending.
+parsing. Networking is isolated behind `beman::redis::detail::transport`, which
+uses `getaddrinfo` for endpoint resolution and `beman.net` TCP operations for
+connect, write, and read. `exec(connection&, request)` queues work on the
+connection and `run(connection&)` drives the queued requests through connect,
+write, read, parse, and receiver completion. RESP3 negotiation, authentication,
+push-message handling, and a fully long-lived/stoppable run loop are still
+pending.
 
 ## Build
 
@@ -80,6 +82,9 @@ auto connect_sender = redis::connect(cfg);
 // beman::execution::start(state);
 ```
 
+Command execution is driven by `run(connection&)`: start one or more `exec`
+operation states, then start `run` to process the queued requests.
+
 See `examples/` for complete starter programs.
 
 ```bash
@@ -98,10 +103,13 @@ See `examples/` for complete starter programs.
 
 ## Roadmap
 
-1. Replace the synchronous transport MVP with a `beman.net` async TCP implementation.
-2. Add a long-lived connection run loop that correlates pending requests with
+1. Extend `run(connection&)` into a long-lived stoppable loop that can wait for
+   future `exec` requests.
+2. Broaden the run loop to support concurrent producers and robust correlation of
    parsed responses.
-3. Add authentication and RESP3 `HELLO` negotiation.
-4. Add push-message handling for RESP3, pub/sub, and invalidation messages.
-5. Define reconnect and cancellation semantics.
-6. Add typed response adapters after the generic response model is stable.
+3. Replace the project-local `getaddrinfo` fallback with a native `beman.net`
+   resolver once that API is available.
+4. Add authentication and RESP3 `HELLO` negotiation.
+5. Add push-message handling for RESP3, pub/sub, and invalidation messages.
+6. Define reconnect and cancellation semantics.
+7. Add typed response adapters after the generic response model is stable.

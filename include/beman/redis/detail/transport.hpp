@@ -6,6 +6,7 @@
 
 #include <beman/redis/config.hpp>
 
+#include <memory>
 #include <string>
 #include <string_view>
 
@@ -16,9 +17,8 @@ class transport {
     explicit transport(config cfg);
     ~transport();
 
-    transport(transport&& other) noexcept;
-    auto operator=(transport&& other) noexcept -> transport&;
-
+    transport(transport&& other) = delete;
+    auto operator=(transport&& other) -> transport& = delete;
     transport(transport const&) = delete;
     auto operator=(transport const&) -> transport& = delete;
 
@@ -27,8 +27,9 @@ class transport {
     [[nodiscard]] auto read_some() -> std::string;
 
   private:
-    config cfg_;
-    int    socket_ = -1;
+    class impl;
+
+    std::unique_ptr<impl> impl_;
 };
 
 } // namespace beman::redis::detail

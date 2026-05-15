@@ -3,173 +3,230 @@
 
 #include <beman/redis/detail/transport.hpp>
 
+#include <beman/net/net.hpp>
+
 #include <array>
-#include <cerrno>
-#include <cstring>
+#include <exception>
 #include <memory>
+#include <optional>
 #include <stdexcept>
+#include <string>
 #include <system_error>
+#include <type_traits>
 #include <utility>
+#include <vector>
 
 #include <netdb.h>
-#include <netinet/tcp.h>
-#include <sys/socket.h>
-#include <sys/types.h>
-#include <unistd.h>
 
 namespace beman::redis::detail {
 namespace {
 
-constexpr int invalid_socket = -1;
-
-auto close_socket(int& socket) noexcept -> void {
-    if (socket != invalid_socket) {
-        (void)::close(socket);
-        socket = invalid_socket;
-    }
-}
+namespace ex  = ::beman::execution;
+namespace net = ::beman::net;
 
 auto endpoint_name(config const& cfg) -> std::string { return cfg.host + ":" + cfg.port; }
 
-auto last_error() -> std::error_code { return std::error_code(errno, std::system_category()); }
-
-auto make_socket_error(std::error_code error, std::string message) -> std::system_error {
-    return std::system_error(error, std::move(message));
-}
-
-auto disable_sigpipe(int socket) -> void {
-#ifdef SO_NOSIGPIPE
-    int enabled = 1;
-    (void)::setsockopt(socket, SOL_SOCKET, SO_NOSIGPIPE, &enabled, sizeof(enabled));
-#else
-    (void)socket;
-#endif
-}
-
-auto set_tcp_no_delay(int socket) -> void {
-    int enabled = 1;
-    (void)::setsockopt(socket, IPPROTO_TCP, TCP_NODELAY, &enabled, sizeof(enabled));
-}
-
-} // namespace
-
-transport::transport(config cfg) : cfg_(std::move(cfg)) {}
-
-transport::~transport() { close_socket(this->socket_); }
-
-transport::transport(transport&& other) noexcept
-    : cfg_(std::move(other.cfg_)), socket_(std::exchange(other.socket_, invalid_socket)) {}
-
-auto transport::operator=(transport&& other) noexcept -> transport& {
-    if (this != &other) {
-        close_socket(this->socket_);
-        this->cfg_    = std::move(other.cfg_);
-        this->socket_ = std::exchange(other.socket_, invalid_socket);
-    }
-
-    return *this;
-}
-
-auto transport::connect() -> void {
+auto resolve_endpoints(config const& cfg) -> std::vector<net::ip::tcp::endpoint> {
+    // beman.net does not currently expose a stable general-purpose resolver API
+    // for host/service names here. Keep this fallback isolated so it can be
+    // replaced with the native beman.net resolver once that functionality lands.
     addrinfo hints{};
     hints.ai_family   = AF_UNSPEC;
     hints.ai_socktype = SOCK_STREAM;
     hints.ai_protocol = IPPROTO_TCP;
 
     addrinfo* raw_results = nullptr;
-    if (auto const rc = ::getaddrinfo(this->cfg_.host.c_str(), this->cfg_.port.c_str(), &hints, &raw_results);
-        rc != 0) {
-        throw std::runtime_error("failed to resolve Redis endpoint " + endpoint_name(this->cfg_) + ": " +
-                                 ::gai_strerror(rc));
+    if (auto const rc = ::getaddrinfo(cfg.host.c_str(), cfg.port.c_str(), &hints, &raw_results); rc != 0) {
+        throw std::runtime_error("failed to resolve Redis endpoint " + endpoint_name(cfg) + ": " + ::gai_strerror(rc));
     }
 
     auto results = std::unique_ptr<addrinfo, decltype([](addrinfo* value) { ::freeaddrinfo(value); })>{raw_results};
-    std::error_code last_connect_error;
 
+    std::vector<net::ip::tcp::endpoint> endpoints;
     for (auto* current = results.get(); current != nullptr; current = current->ai_next) {
-        int candidate = ::socket(current->ai_family, current->ai_socktype, current->ai_protocol);
-        if (candidate == invalid_socket) {
-            last_connect_error = last_error();
+        if (current->ai_addr == nullptr) {
             continue;
         }
 
-        int rc = 0;
-        do {
-            rc = ::connect(candidate, current->ai_addr, current->ai_addrlen);
-        } while (rc == -1 && errno == EINTR);
+        net::detail::endpoint endpoint(current->ai_addr, current->ai_addrlen);
+        endpoints.emplace_back(endpoint);
+    }
 
-        if (rc == 0) {
-            close_socket(this->socket_);
-            this->socket_ = candidate;
-            disable_sigpipe(this->socket_);
-            set_tcp_no_delay(this->socket_);
+    if (endpoints.empty()) {
+        throw std::runtime_error("failed to resolve Redis endpoint " + endpoint_name(cfg) + ": no usable addresses");
+    }
+
+    return endpoints;
+}
+
+auto as_exception(std::error_code error) -> std::exception_ptr {
+    return std::make_exception_ptr(std::system_error(error));
+}
+
+auto as_exception(std::exception_ptr error) -> std::exception_ptr { return error; }
+
+template <class Error>
+auto as_exception(Error&&) -> std::exception_ptr {
+    return std::make_exception_ptr(std::runtime_error("beman.net operation failed with an unknown error type"));
+}
+
+struct void_receiver {
+    using receiver_concept = ex::receiver_tag;
+
+    bool*               done{};
+    bool*               stopped{};
+    std::exception_ptr* error{};
+
+    auto get_env() const noexcept -> ex::env<> { return {}; }
+    auto set_value() && noexcept -> void { *this->done = true; }
+
+    template <class Error>
+    auto set_error(Error&& value) && noexcept -> void {
+        *this->error = as_exception(std::forward<Error>(value));
+    }
+
+    auto set_stopped() && noexcept -> void { *this->stopped = true; }
+};
+
+template <class T>
+struct value_receiver {
+    using receiver_concept = ex::receiver_tag;
+
+    std::optional<T>*   value{};
+    bool*               stopped{};
+    std::exception_ptr* error{};
+
+    auto get_env() const noexcept -> ex::env<> { return {}; }
+    auto set_value(T item) && noexcept -> void { this->value->emplace(std::move(item)); }
+
+    template <class Error>
+    auto set_error(Error&& item) && noexcept -> void {
+        *this->error = as_exception(std::forward<Error>(item));
+    }
+
+    auto set_stopped() && noexcept -> void { *this->stopped = true; }
+};
+
+template <class Done>
+auto run_until_complete(net::io_context&           io,
+                        Done                       done,
+                        bool const&               stopped,
+                        std::exception_ptr const& error,
+                        std::string_view          operation) -> void {
+    while (!done() && !stopped && !error) {
+        if (io.run_one() == 0u) {
+            throw std::runtime_error("beman.net " + std::string(operation) + " operation did not complete");
+        }
+    }
+
+    if (error) {
+        std::rethrow_exception(error);
+    }
+    if (stopped) {
+        throw std::runtime_error("beman.net " + std::string(operation) + " operation stopped");
+    }
+}
+
+auto run_void(net::io_context& io, std::string_view operation, ex::sender auto sender) -> void {
+    bool               done    = false;
+    bool               stopped = false;
+    std::exception_ptr error;
+
+    auto op = ex::connect(std::move(sender), void_receiver{&done, &stopped, &error});
+    ex::start(op);
+    run_until_complete(io, [&done] { return done; }, stopped, error, operation);
+}
+
+template <class T>
+auto run_value(net::io_context& io, std::string_view operation, ex::sender auto sender) -> T {
+    std::optional<T>   value;
+    bool               stopped = false;
+    std::exception_ptr error;
+
+    auto op = ex::connect(std::move(sender), value_receiver<T>{&value, &stopped, &error});
+    ex::start(op);
+    run_until_complete(io, [&value] { return value.has_value(); }, stopped, error, operation);
+    return std::move(*value);
+}
+
+} // namespace
+
+class transport::impl {
+  public:
+    explicit impl(config cfg) : cfg_(std::move(cfg)) {}
+
+    auto connect() -> void {
+        if (this->connected_) {
             return;
         }
 
-        last_connect_error = last_error();
-        close_socket(candidate);
-    }
+        std::exception_ptr last_error;
 
-    if (last_connect_error) {
-        throw make_socket_error(last_connect_error, "failed to connect to Redis endpoint " + endpoint_name(this->cfg_));
-    }
-
-    throw std::runtime_error("failed to connect to Redis endpoint " + endpoint_name(this->cfg_) +
-                             ": no usable address results");
-}
-
-auto transport::write_all(std::string_view payload) -> void {
-    if (this->socket_ == invalid_socket) {
-        throw std::logic_error("Redis transport is not connected");
-    }
-
-    auto const* data = payload.data();
-    auto        size = payload.size();
-
-    while (size != 0u) {
-#ifdef MSG_NOSIGNAL
-        constexpr int flags = MSG_NOSIGNAL;
-#else
-        constexpr int flags = 0;
-#endif
-        auto const written = ::send(this->socket_, data, size, flags);
-        if (written > 0) {
-            auto const written_size = static_cast<std::size_t>(written);
-            data += written_size;
-            size -= written_size;
-            continue;
-        }
-        if (written == -1 && errno == EINTR) {
-            continue;
-        }
-        if (written == 0) {
-            throw std::runtime_error("Redis socket write returned zero bytes");
+        for (auto const& endpoint : resolve_endpoints(this->cfg_)) {
+            this->socket_.emplace(this->io_, endpoint);
+            try {
+                run_void(this->io_, "connect", net::async_connect(*this->socket_));
+                this->connected_ = true;
+                return;
+            } catch (...) {
+                last_error = std::current_exception();
+                this->socket_.reset();
+            }
         }
 
-        throw make_socket_error(last_error(), "failed to write Redis request");
-    }
-}
-
-auto transport::read_some() -> std::string {
-    if (this->socket_ == invalid_socket) {
-        throw std::logic_error("Redis transport is not connected");
-    }
-
-    std::array<char, 4096> buffer{};
-    for (;;) {
-        auto const read = ::recv(this->socket_, buffer.data(), buffer.size(), 0);
-        if (read > 0) {
-            return std::string(buffer.data(), static_cast<std::size_t>(read));
+        if (last_error) {
+            std::rethrow_exception(last_error);
         }
-        if (read == 0) {
+
+        throw std::runtime_error("failed to connect to Redis endpoint " + endpoint_name(this->cfg_));
+    }
+
+    auto write_all(std::string_view payload) -> void {
+        if (!this->connected_ || !this->socket_) {
+            throw std::logic_error("Redis transport is not connected");
+        }
+
+        while (!payload.empty()) {
+            auto const written = run_value<std::size_t>(
+                this->io_, "send", net::async_send(*this->socket_, net::buffer(payload.data(), payload.size())));
+            if (written == 0u) {
+                throw std::runtime_error("Redis socket write returned zero bytes");
+            }
+
+            payload.remove_prefix(written);
+        }
+    }
+
+    [[nodiscard]] auto read_some() -> std::string {
+        if (!this->connected_ || !this->socket_) {
+            throw std::logic_error("Redis transport is not connected");
+        }
+
+        std::array<char, 4096> buffer{};
+        auto const read = run_value<std::size_t>(
+            this->io_, "receive", net::async_receive(*this->socket_, net::buffer(buffer.data(), buffer.size())));
+        if (read == 0u) {
             return {};
         }
-        if (errno == EINTR) {
-            continue;
-        }
 
-        throw make_socket_error(last_error(), "failed to read Redis response");
+        return std::string(buffer.data(), read);
     }
-}
+
+  private:
+    config                                       cfg_;
+    net::io_context                              io_;
+    std::optional<net::ip::tcp::socket>          socket_;
+    bool                                         connected_ = false;
+};
+
+transport::transport(config cfg) : impl_(std::make_unique<impl>(std::move(cfg))) {}
+
+transport::~transport() = default;
+
+auto transport::connect() -> void { this->impl_->connect(); }
+
+auto transport::write_all(std::string_view payload) -> void { this->impl_->write_all(payload); }
+
+auto transport::read_some() -> std::string { return this->impl_->read_some(); }
 
 } // namespace beman::redis::detail

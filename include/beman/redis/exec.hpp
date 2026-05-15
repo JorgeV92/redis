@@ -31,7 +31,7 @@ class exec_sender {
     [[nodiscard]] auto get_env() const noexcept -> ::beman::execution::env<> { return {}; }
 
     template <class Receiver>
-    class operation {
+    class operation : public detail::pending_exec_operation {
       public:
         using operation_state_concept = ::beman::execution::operation_state_tag;
 
@@ -47,12 +47,21 @@ class exec_sender {
                     throw std::logic_error("beman.redis exec requires a non-empty request");
                 }
 
-                auto response = this->conn_->execute(std::move(this->req_));
-                ::beman::execution::set_value(std::move(this->receiver_), std::move(response));
+                this->conn_->enqueue(std::move(this->req_), *this);
             } catch (...) {
                 ::beman::execution::set_error(std::move(this->receiver_), std::current_exception());
             }
         }
+
+        auto complete(generic_response response) noexcept -> void override {
+            ::beman::execution::set_value(std::move(this->receiver_), std::move(response));
+        }
+
+        auto fail(std::exception_ptr error) noexcept -> void override {
+            ::beman::execution::set_error(std::move(this->receiver_), std::move(error));
+        }
+
+        auto stop() noexcept -> void override { ::beman::execution::set_stopped(std::move(this->receiver_)); }
 
       private:
         connection* conn_;
@@ -75,11 +84,53 @@ class exec_sender {
     return exec_sender{conn, std::move(req)};
 }
 
-[[nodiscard]] inline auto run(connection& conn) -> detail::stopped_sender {
-    (void)conn;
-    // TODO: a real implementation should run until stopped and deliver RESP3 push messages.
-    return detail::stopped_sender{};
-}
+class run_sender {
+  public:
+    using sender_concept = ::beman::execution::sender_tag;
+    using completion_signatures =
+        ::beman::execution::completion_signatures<::beman::execution::set_value_t(),
+                                                  ::beman::execution::set_error_t(std::exception_ptr),
+                                                  ::beman::execution::set_stopped_t()>;
+
+    explicit run_sender(connection& conn) : conn_(&conn) {}
+
+    [[nodiscard]] auto get_env() const noexcept -> ::beman::execution::env<> { return {}; }
+
+    template <class Receiver>
+    class operation {
+      public:
+        using operation_state_concept = ::beman::execution::operation_state_tag;
+
+        operation(connection* conn, Receiver receiver) : conn_(conn), receiver_(std::move(receiver)) {}
+
+        auto start() & noexcept -> void {
+            try {
+                if (this->conn_ == nullptr) {
+                    throw std::logic_error("beman.redis run started with no connection");
+                }
+
+                this->conn_->run();
+                ::beman::execution::set_value(std::move(this->receiver_));
+            } catch (...) {
+                ::beman::execution::set_error(std::move(this->receiver_), std::current_exception());
+            }
+        }
+
+      private:
+        connection* conn_;
+        Receiver    receiver_;
+    };
+
+    template <class Receiver>
+    auto connect(Receiver&& receiver) && noexcept -> operation<std::remove_cvref_t<Receiver>> {
+        return operation<std::remove_cvref_t<Receiver>>{this->conn_, std::forward<Receiver>(receiver)};
+    }
+
+  private:
+    connection* conn_;
+};
+
+[[nodiscard]] inline auto run(connection& conn) -> run_sender { return run_sender{conn}; }
 
 } // namespace beman::redis
 

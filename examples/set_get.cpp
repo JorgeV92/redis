@@ -45,6 +45,23 @@ struct print_result {
     auto set_stopped() && noexcept -> void { std::cout << "SET/GET stopped\n"; }
 };
 
+struct run_receiver {
+    using receiver_concept = ex::receiver_tag;
+
+    auto get_env() const noexcept -> ex::env<> { return {}; }
+    auto set_value() && noexcept -> void {}
+    auto set_error(std::exception_ptr error) && noexcept -> void {
+        try {
+            if (error) {
+                std::rethrow_exception(error);
+            }
+        } catch (std::exception const& ex) {
+            std::cout << "run failed: " << ex.what() << '\n';
+        }
+    }
+    auto set_stopped() && noexcept -> void { std::cout << "run stopped\n"; }
+};
+
 auto main() -> int {
     std::optional<redis::connection> conn;
     std::exception_ptr               error;
@@ -68,4 +85,7 @@ auto main() -> int {
 
     auto exec_op = ex::connect(redis::exec(*conn, std::move(req)), print_result{});
     ex::start(exec_op);
+
+    auto run_op = ex::connect(redis::run(*conn), run_receiver{});
+    ex::start(run_op);
 }
