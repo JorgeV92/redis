@@ -12,6 +12,7 @@
 #include <beman/redis/response.hpp>
 
 #include <exception>
+#include <functional>
 #include <stdexcept>
 #include <type_traits>
 #include <utility>
@@ -109,8 +110,13 @@ class run_sender {
                     throw std::logic_error("beman.redis run started with no connection");
                 }
 
-                this->conn_->run();
-                ::beman::execution::set_value(std::move(this->receiver_));
+                auto stop_token = ::beman::execution::get_stop_token(::beman::execution::get_env(this->receiver_));
+                this->conn_->run([&stop_token] { return stop_token.stop_requested(); });
+                if (stop_token.stop_requested()) {
+                    ::beman::execution::set_stopped(std::move(this->receiver_));
+                } else {
+                    ::beman::execution::set_value(std::move(this->receiver_));
+                }
             } catch (...) {
                 ::beman::execution::set_error(std::move(this->receiver_), std::current_exception());
             }

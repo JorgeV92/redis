@@ -5,6 +5,7 @@
 
 #include <array>
 #include <cassert>
+#include <chrono>
 #include <cstdlib>
 #include <exception>
 #include <optional>
@@ -41,11 +42,27 @@ struct response_receiver {
     std::optional<redis::generic_response>* value{};
     std::exception_ptr* error{};
     bool*               stopped{};
+    ex::inplace_stop_source* source{};
 
     auto get_env() const noexcept -> ex::env<> { return {}; }
-    auto set_value(redis::generic_response response) && noexcept -> void { this->value->emplace(std::move(response)); }
-    auto set_error(std::exception_ptr value) && noexcept -> void { *this->error = value; }
-    auto set_stopped() && noexcept -> void { *this->stopped = true; }
+    auto set_value(redis::generic_response response) && noexcept -> void {
+        this->value->emplace(std::move(response));
+        if (this->source) {
+            this->source->request_stop();
+        }
+    }
+    auto set_error(std::exception_ptr value) && noexcept -> void {
+        *this->error = value;
+        if (this->source) {
+            this->source->request_stop();
+        }
+    }
+    auto set_stopped() && noexcept -> void {
+        *this->stopped = true;
+        if (this->source) {
+            this->source->request_stop();
+        }
+    }
 };
 
 struct stopped_receiver {
@@ -62,11 +79,18 @@ struct stopped_receiver {
 struct run_receiver {
     using receiver_concept = ex::receiver_tag;
 
+    struct env {
+        ex::inplace_stop_source* source{};
+
+        auto query(ex::get_stop_token_t) const noexcept { return this->source->get_token(); }
+    };
+
     bool*               value{};
     std::exception_ptr* error{};
     bool*               stopped{};
+    ex::inplace_stop_source* source{};
 
-    auto get_env() const noexcept -> ex::env<> { return {}; }
+    auto get_env() const noexcept -> env { return {this->source}; }
     auto set_value() && noexcept -> void { *this->value = true; }
     auto set_error(std::exception_ptr value) && noexcept -> void { *this->error = value; }
     auto set_stopped() && noexcept -> void { *this->stopped = true; }
@@ -205,26 +229,31 @@ auto test_live_tcp_ping() -> void {
     assert(!connect_stopped);
     assert(conn->get_config().host == "localhost");
 
-    redis::request req;
-    req.push("PING");
-
     std::optional<redis::generic_response> got_value;
     std::exception_ptr exec_error;
     bool               exec_stopped = false;
-
-    auto exec_op =
-        ex::connect(redis::exec(*conn, std::move(req)), response_receiver{&got_value, &exec_error, &exec_stopped});
-    ex::start(exec_op);
+    ex::inplace_stop_source source;
 
     bool               run_value = false;
     std::exception_ptr run_error;
     bool               run_stopped = false;
-    auto run_op = ex::connect(redis::run(*conn), run_receiver{&run_value, &run_error, &run_stopped});
-    ex::start(run_op);
+    auto run_op = ex::connect(redis::run(*conn), run_receiver{&run_value, &run_error, &run_stopped, &source});
+    std::thread run_thread([&run_op] { ex::start(run_op); });
 
-    assert(run_value);
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+
+    redis::request req;
+    req.push("PING");
+
+    auto exec_op =
+        ex::connect(redis::exec(*conn, std::move(req)), response_receiver{&got_value, &exec_error, &exec_stopped, &source});
+    ex::start(exec_op);
+
+    run_thread.join();
+
+    assert(!run_value);
     assert(!run_error);
-    assert(!run_stopped);
+    assert(run_stopped);
 
     assert(got_value);
     assert(got_value->size() == 1u);

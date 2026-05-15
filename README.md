@@ -19,10 +19,11 @@ The current MVP supports request encoding and basic RESP2-compatible response
 parsing. Networking is isolated behind `beman::redis::detail::transport`, which
 uses `getaddrinfo` for endpoint resolution and `beman.net` TCP operations for
 connect, write, and read. `exec(connection&, request)` queues work on the
-connection and `run(connection&)` drives the queued requests through connect,
-write, read, parse, and receiver completion. RESP3 negotiation, authentication,
-push-message handling, and a fully long-lived/stoppable run loop are still
-pending.
+connection and `run(connection&)` owns the long-lived I/O loop: it connects,
+writes queued requests, reads bytes into the connection buffer, parses complete
+RESP frames, and completes waiting `exec` receivers. RESP3 negotiation,
+authentication, push-message handling, reconnect, and cancellation policy are
+still pending.
 
 ## Build
 
@@ -83,7 +84,8 @@ auto connect_sender = redis::connect(cfg);
 ```
 
 Command execution is driven by `run(connection&)`: start one or more `exec`
-operation states, then start `run` to process the queued requests.
+operation states, then start `run` to process queued requests and future
+requests until the run receiver's stop token is requested.
 
 See `examples/` for complete starter programs.
 
@@ -103,13 +105,9 @@ See `examples/` for complete starter programs.
 
 ## Roadmap
 
-1. Extend `run(connection&)` into a long-lived stoppable loop that can wait for
-   future `exec` requests.
-2. Broaden the run loop to support concurrent producers and robust correlation of
-   parsed responses.
-3. Replace the project-local `getaddrinfo` fallback with a native `beman.net`
+1. Broaden the run loop to support robust cancellation and reconnect behavior.
+2. Replace the project-local `getaddrinfo` fallback with a native `beman.net`
    resolver once that API is available.
-4. Add authentication and RESP3 `HELLO` negotiation.
-5. Add push-message handling for RESP3, pub/sub, and invalidation messages.
-6. Define reconnect and cancellation semantics.
-7. Add typed response adapters after the generic response model is stable.
+3. Add authentication and RESP3 `HELLO` negotiation.
+4. Add push-message handling for RESP3, pub/sub, and invalidation messages.
+5. Add typed response adapters after the generic response model is stable.

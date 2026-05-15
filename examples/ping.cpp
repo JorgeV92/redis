@@ -27,10 +27,13 @@ struct connect_receiver {
 struct print_response_receiver {
     using receiver_concept = ex::receiver_tag;
 
+    ex::inplace_stop_source* source{};
+
     auto get_env() const noexcept -> ex::env<> { return {}; }
 
     auto set_value(redis::generic_response response) && noexcept -> void {
         std::cout << redis::to_string(response) << '\n';
+        this->source->request_stop();
     }
 
     auto set_error(std::exception_ptr error) && noexcept -> void {
@@ -41,15 +44,27 @@ struct print_response_receiver {
         } catch (std::exception const& ex) {
             std::cout << "PING failed: " << ex.what() << '\n';
         }
+        this->source->request_stop();
     }
 
-    auto set_stopped() && noexcept -> void { std::cout << "PING stopped\n"; }
+    auto set_stopped() && noexcept -> void {
+        std::cout << "PING stopped\n";
+        this->source->request_stop();
+    }
 };
 
 struct run_receiver {
     using receiver_concept = ex::receiver_tag;
 
-    auto get_env() const noexcept -> ex::env<> { return {}; }
+    struct env {
+        ex::inplace_stop_source* source{};
+
+        auto query(ex::get_stop_token_t) const noexcept { return this->source->get_token(); }
+    };
+
+    ex::inplace_stop_source* source{};
+
+    auto get_env() const noexcept -> env { return {this->source}; }
     auto set_value() && noexcept -> void {}
     auto set_error(std::exception_ptr error) && noexcept -> void {
         try {
@@ -60,7 +75,7 @@ struct run_receiver {
             std::cout << "run failed: " << ex.what() << '\n';
         }
     }
-    auto set_stopped() && noexcept -> void { std::cout << "run stopped\n"; }
+    auto set_stopped() && noexcept -> void {}
 };
 
 auto main() -> int {
@@ -85,9 +100,11 @@ auto main() -> int {
     redis::request req;
     req.push("PING");
 
-    auto exec_op = ex::connect(redis::exec(*conn, std::move(req)), print_response_receiver{});
+    ex::inplace_stop_source source;
+
+    auto exec_op = ex::connect(redis::exec(*conn, std::move(req)), print_response_receiver{&source});
     ex::start(exec_op);
 
-    auto run_op = ex::connect(redis::run(*conn), run_receiver{});
+    auto run_op = ex::connect(redis::run(*conn), run_receiver{&source});
     ex::start(run_op);
 }

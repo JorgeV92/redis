@@ -12,27 +12,27 @@ The core API is sender-shaped. `connect(config)`, `exec(connection&, request)`,
 and `run(connection&)` return `beman.execution` sender-like objects that can be
 connected to a receiver and started. The current implementation uses a small
 local sender scaffold, a `getaddrinfo` resolver fallback, a `beman.net` TCP
-transport, and a run loop that drains queued requests so protocol work can be
-tested against Redis before the final long-lived loop lands.
+transport, and a long-lived run loop that waits for queued requests and
+dispatches parsed responses.
 
 ## Milestones
 
 1. Protocol MVP: request encoding, RESP basics, and tests without Redis.
 2. Transport MVP: `getaddrinfo` resolution plus `beman.net` TCP connect/write/read
    behind `detail::transport`.
-3. Execution MVP: command queue, response correlation, and a drain-style run loop.
+3. Execution MVP: command queue, response correlation, and a long-lived run loop.
 4. Redis MVP: PING, SET, GET, AUTH/HELLO, and basic pipelining against Redis.
 5. Resilience MVP: cancellation policy, reconnect state machine, and push messages.
 
 ## First Issues
 
-1. Extend `run(connection&)` into a long-lived stoppable loop.
-2. Allow `run` to wait for future `exec` requests instead of only draining queued work.
+1. Define robust cancellation behavior for active socket operations and queued commands.
+2. Add reconnect behavior after connection failures.
 3. Replace the `getaddrinfo` fallback with a native `beman.net` resolver once
    that API is available.
 4. Add RESP3 `HELLO` negotiation and optional username/password authentication.
 5. Add integration tests gated behind an opt-in live Redis option.
-6. Define cancellation and stop-token behavior for `exec` and `run`.
+6. Add push-message dispatch for RESP3/pub-sub/invalidation messages.
 
 ## Research Questions
 
